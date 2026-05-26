@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RUET Campus Map | Rajshahi University of Engineering & Technology</title>
+  <meta name="description" content="Interactive campus map of RUET - Rajshahi University of Engineering & Technology. Explore 40+ buildings, halls, and landmarks on a real map." />
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+  <!-- Tailwind (built via CLI) -->
+  <link rel="stylesheet" href="./dist/style.css" />
+</head>
+
+<body class="m-0 p-0 bg-ruet-dark font-sans text-slate-200 overflow-hidden h-screen">
+
+  <!-- ===== LOADING SCREEN ===== -->
+  <div id="loading-screen" class="fixed inset-0 bg-ruet-dark z-[9999] flex flex-col items-center justify-center transition-opacity duration-700">
+    <div class="w-14 h-14 border-3 border-ruet-border border-t-ruet-accent rounded-full animate-map-spin"></div>
+    <p class="mt-5 text-ruet-accent font-semibold tracking-wider text-sm">Loading RUET Campus Map...</p>
+    <p class="mt-2 text-slate-500 text-xs">Rajshahi University of Engineering & Technology</p>
+  </div>
+
+  <!-- ===== HEADER ===== -->
+  <header id="header" class="fixed top-0 left-0 right-0 z-[1000] bg-ruet-dark/85 backdrop-blur-xl border-b border-ruet-green/20 px-5 py-3 flex items-center justify-between gap-4">
+    <!-- Logo + Title -->
+    <div class="flex items-center gap-3.5 shrink-0">
+      <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-ruet-green to-ruet-green-light flex items-center justify-center font-extrabold text-sm text-white border border-ruet-accent/30">
+        R
+      </div>
+      <div>
+        <h1 class="text-base font-bold text-slate-100 leading-tight">RUET Campus Map</h1>
+        <p class="text-[11px] text-slate-500">Rajshahi University of Engineering & Technology</p>
+      </div>
+    </div>
+
+    <!-- Search -->
+    <div class="relative flex items-center">
+      <svg class="absolute left-3.5 z-10 pointer-events-none" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input type="text" id="search-box"
+        class="bg-ruet-card/80 border border-ruet-green/30 rounded-xl py-2.5 pl-10 pr-4 text-slate-200 text-sm w-80 outline-none transition-all duration-300 font-sans placeholder:text-slate-500 focus:border-ruet-accent focus:shadow-[0_0_0_3px_rgba(74,222,128,0.15)] focus:bg-ruet-card"
+        placeholder="Search buildings, halls, departments..." autocomplete="off" />
+    </div>
+
+    <!-- Actions -->
+    <div class="flex items-center gap-3 shrink-0">
+      <button id="route-toggle-btn" class="flex items-center gap-2 px-4 h-10 rounded-xl bg-ruet-surface/95 backdrop-blur-sm border border-ruet-border/60 text-slate-300 text-sm font-medium cursor-pointer transition-all duration-200 hover:border-ruet-accent hover:text-ruet-accent" title="Directions">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>
+        Directions
+      </button>
+      <button id="legend-btn" class="flex items-center gap-2 px-4 h-10 rounded-xl bg-ruet-surface/95 backdrop-blur-sm border border-ruet-border/60 text-slate-300 text-sm font-medium cursor-pointer transition-all duration-200 hover:border-ruet-accent hover:text-ruet-accent" title="Legend">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+        Legend
+      </button>
+      <button id="satellite-btn" class="flex items-center gap-2 px-4 h-10 rounded-xl bg-ruet-surface/95 backdrop-blur-sm border border-ruet-border/60 text-slate-300 text-sm font-medium cursor-pointer transition-all duration-200 hover:border-ruet-accent hover:text-ruet-accent" title="Toggle Satellite View">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        Satellite
+      </button>
+    </div>
+  </header>
+
+  <!-- ===== SEARCH RESULTS ===== -->
+  <div id="search-results" class="fixed top-16 left-1/2 -translate-x-1/2 bg-ruet-surface/98 backdrop-blur-xl border border-ruet-green/30 rounded-xl max-h-80 overflow-y-auto w-96 z-[1100] hidden shadow-2xl"></div>
+
+  <!-- ===== MAP ===== -->
+  <div id="map" class="w-full h-screen"></div>
+
+  <!-- ===== ROUTING PANEL (Left Slide-out) ===== -->
+  <div id="route-panel" class="fixed top-20 -left-[380px] w-[350px] max-h-[calc(100vh-100px)] bg-ruet-surface/98 backdrop-blur-2xl border border-ruet-green/25 z-[1000] rounded-2xl transition-all duration-400 overflow-y-auto shadow-2xl flex flex-col">
+    <div class="p-5 flex-1 flex flex-col">
+      <!-- Title + Close -->
+      <div class="flex items-center justify-between mb-4 shrink-0">
+        <h2 class="text-sm font-bold text-slate-100 uppercase tracking-wider flex items-center gap-2">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>
+          Campus Navigation
+        </h2>
+        <button id="route-close-btn" class="text-slate-500 cursor-pointer p-1.5 rounded-lg transition-all duration-200 hover:text-ruet-accent hover:bg-ruet-green/15 border-none bg-transparent">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+
+      <!-- Inputs Container -->
+      <div class="space-y-3 mb-4 relative shrink-0">
+        <!-- From Input -->
+        <div id="route-from-container" class="relative">
+          <label class="block text-[10px] text-slate-500 font-semibold uppercase mb-1">Start Location</label>
+          <div class="relative flex items-center">
+            <span class="absolute left-3 text-xs">🟢</span>
+            <input type="text" id="route-from" placeholder="Type start building..." autocomplete="off"
+                   class="w-full bg-ruet-card/85 border border-ruet-border/60 rounded-xl py-2 pl-8 pr-4 text-xs text-slate-200 outline-none placeholder:text-slate-500 focus:border-emerald-400 font-medium" />
+          </div>
+          <!-- Autocomplete Dropdown -->
+          <div id="from-autocomplete" class="absolute left-0 right-0 top-14 bg-ruet-surface/98 border border-ruet-border/80 rounded-xl max-h-40 overflow-y-auto z-[1200] hidden shadow-2xl"></div>
+        </div>
+
+        <!-- Swap Button -->
+        <div class="absolute right-4 top-[30px] z-10">
+          <button id="route-swap-btn" class="w-8 h-8 rounded-full bg-ruet-card border border-ruet-border/80 text-slate-400 flex items-center justify-center cursor-pointer transition-all duration-200 hover:border-ruet-accent hover:text-ruet-accent" title="Swap locations">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 11 21 7 17 3"/><line x1="21" y1="7" x2="9" y2="7"/><polyline points="7 13 3 17 7 21"/><line x1="3" y1="17" x2="15" y2="17"/></svg>
+          </button>
+        </div>
+
+        <!-- To Input -->
+        <div id="route-to-container" class="relative">
+          <label class="block text-[10px] text-slate-500 font-semibold uppercase mb-1">Destination</label>
+          <div class="relative flex items-center">
+            <span class="absolute left-3 text-xs">🔴</span>
+            <input type="text" id="route-to" placeholder="Type destination building..." autocomplete="off"
+                   class="w-full bg-ruet-card/85 border border-ruet-border/60 rounded-xl py-2 pl-8 pr-4 text-xs text-slate-200 outline-none placeholder:text-slate-500 focus:border-red-400 font-medium" />
+          </div>
+          <!-- Autocomplete Dropdown -->
+          <div id="to-autocomplete" class="absolute left-0 right-0 top-14 bg-ruet-surface/98 border border-ruet-border/80 rounded-xl max-h-40 overflow-y-auto z-[1200] hidden shadow-2xl"></div>
+        </div>
+      </div>
+
+      <!-- Transit Mode Selector -->
+      <div class="flex bg-ruet-card/90 rounded-xl p-1 border border-ruet-border/50 gap-1 mb-4 shrink-0">
+        <button class="transit-mode-btn active flex-1 py-1.5 rounded-lg flex items-center justify-center gap-1.5 text-xs font-semibold cursor-pointer text-ruet-accent bg-ruet-green/20 border-none outline-none transition-all duration-200" data-mode="walk">
+          🚶 Walk
+        </button>
+        <button class="transit-mode-btn flex-1 py-1.5 rounded-lg flex items-center justify-center gap-1.5 text-xs font-semibold cursor-pointer text-slate-400 hover:text-slate-200 border-none outline-none transition-all duration-200" data-mode="bike">
+          🚴 Bike
+        </button>
+        <button class="transit-mode-btn flex-1 py-1.5 rounded-lg flex items-center justify-center gap-1.5 text-xs font-semibold cursor-pointer text-slate-400 hover:text-slate-200 border-none outline-none transition-all duration-200" data-mode="drive">
+          🚗 Drive
+        </button>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="flex gap-2.5 mb-4 shrink-0">
+        <button id="route-submit-btn" class="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-ruet-green to-ruet-green-light border border-ruet-accent/30 text-white text-xs font-semibold cursor-pointer transition-all duration-200 hover:brightness-110 flex items-center justify-center gap-1.5 shadow-lg">
+          Find Route
+        </button>
+        <button id="route-clear-btn" class="px-3.5 py-2.5 rounded-xl bg-ruet-card border border-ruet-border/60 text-slate-400 text-xs font-medium cursor-pointer transition-all duration-200 hover:border-red-400 hover:text-red-400 hidden">
+          Clear
+        </button>
+      </div>
+
+      <!-- Route results (Time, Distance, Steps) -->
+      <div id="route-results" class="flex-1 overflow-y-auto hidden"></div>
+    </div>
+  </div>
+
+  <!-- ===== CATEGORY FILTER BAR ===== -->
+  <div id="category-bar" class="fixed bottom-6 left-6 z-[1000] flex gap-2 flex-wrap max-w-[calc(100%-100px)]">
+    <button class="cat-pill active flex items-center gap-1.5 px-4 py-2 rounded-full bg-ruet-surface/90 backdrop-blur-sm border border-ruet-border/60 text-slate-400 text-xs font-medium cursor-pointer transition-all duration-300 hover:border-ruet-accent hover:text-slate-200 whitespace-nowrap" data-cat="all">
+      <span class="w-2 h-2 rounded-full bg-gradient-to-br from-yellow-400 via-red-400 to-blue-400 inline-block"></span>
+      All
+    </button>
+    <button class="cat-pill flex items-center gap-1.5 px-4 py-2 rounded-full bg-ruet-surface/90 backdrop-blur-sm border border-ruet-border/60 text-slate-400 text-xs font-medium cursor-pointer transition-all duration-300 hover:border-ruet-accent hover:text-slate-200 whitespace-nowrap" data-cat="academic">
+      <span class="w-2 h-2 rounded-full bg-yellow-400 inline-block"></span>
+      Academic
+    </button>
+    <button class="cat-pill flex items-center gap-1.5 px-4 py-2 rounded-full bg-ruet-surface/90 backdrop-blur-sm border border-ruet-border/60 text-slate-400 text-xs font-medium cursor-pointer transition-all duration-300 hover:border-ruet-accent hover:text-slate-200 whitespace-nowrap" data-cat="hall">
+      <span class="w-2 h-2 rounded-full bg-red-400 inline-block"></span>
+      Halls
+    </button>
+    <button class="cat-pill flex items-center gap-1.5 px-4 py-2 rounded-full bg-ruet-surface/90 backdrop-blur-sm border border-ruet-border/60 text-slate-400 text-xs font-medium cursor-pointer transition-all duration-300 hover:border-ruet-accent hover:text-slate-200 whitespace-nowrap" data-cat="facility">
+      <span class="w-2 h-2 rounded-full bg-sky-400 inline-block"></span>
+      Facilities
+    </button>
+    <button class="cat-pill flex items-center gap-1.5 px-4 py-2 rounded-full bg-ruet-surface/90 backdrop-blur-sm border border-ruet-border/60 text-slate-400 text-xs font-medium cursor-pointer transition-all duration-300 hover:border-ruet-accent hover:text-slate-200 whitespace-nowrap" data-cat="admin">
+      <span class="w-2 h-2 rounded-full bg-amber-500 inline-block"></span>
+      Admin
+    </button>
+    <button class="cat-pill flex items-center gap-1.5 px-4 py-2 rounded-full bg-ruet-surface/90 backdrop-blur-sm border border-ruet-border/60 text-slate-400 text-xs font-medium cursor-pointer transition-all duration-300 hover:border-ruet-accent hover:text-slate-200 whitespace-nowrap" data-cat="residential">
+      <span class="w-2 h-2 rounded-full bg-orange-400 inline-block"></span>
+      Residential
+    </button>
+    <button class="cat-pill flex items-center gap-1.5 px-4 py-2 rounded-full bg-ruet-surface/90 backdrop-blur-sm border border-ruet-border/60 text-slate-400 text-xs font-medium cursor-pointer transition-all duration-300 hover:border-ruet-accent hover:text-slate-200 whitespace-nowrap" data-cat="sports">
+      <span class="w-2 h-2 rounded-full bg-blue-500 inline-block"></span>
+      Sports
+    </button>
+    <button class="cat-pill flex items-center gap-1.5 px-4 py-2 rounded-full bg-ruet-surface/90 backdrop-blur-sm border border-ruet-border/60 text-slate-400 text-xs font-medium cursor-pointer transition-all duration-300 hover:border-ruet-accent hover:text-slate-200 whitespace-nowrap" data-cat="landmark">
+      <span class="w-2 h-2 rounded-full bg-emerald-400 inline-block"></span>
+      Landmarks
+    </button>
+  </div>
+
+  <!-- ===== INFO BADGE ===== -->
+  <div class="fixed top-20 right-5 z-[1000] bg-ruet-surface/92 backdrop-blur-xl border border-ruet-green/25 rounded-2xl px-5 py-4 max-w-[260px] shadow-xl">
+    <div class="flex items-center gap-2 mb-2">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+      <span class="text-xs font-semibold text-ruet-accent">RUET, Rajshahi</span>
+    </div>
+    <p class="text-[11px] text-slate-500 leading-relaxed">152 acres · 14 departments · Est. 1964<br/>24.3636°N, 88.6280°E</p>
+    <div class="mt-2.5 flex gap-1.5 flex-wrap">
+      <span class="px-2 py-0.5 rounded-md bg-ruet-green/20 text-ruet-accent text-[10px] font-medium">📍 Kazla, Rajshahi</span>
+      <span class="px-2 py-0.5 rounded-md bg-blue-500/15 text-blue-400 text-[10px] font-medium">🎓 4 Faculties</span>
+    </div>
+  </div>
+
+  <!-- ===== SIDE PANEL ===== -->
+  <div id="side-panel" class="fixed top-0 -right-[420px] w-[400px] h-screen bg-ruet-surface/98 backdrop-blur-2xl border-l border-ruet-green/25 z-[1100] transition-all duration-400 overflow-y-auto shadow-[-8px_0_32px_rgba(0,0,0,0.5)]">
+    <div class="p-6">
+      <div class="flex items-center justify-between mb-6">
+        <h2 class="text-lg font-bold text-slate-100" id="panel-title">Building Info</h2>
+        <button id="close-panel" class="text-slate-500 cursor-pointer p-2 rounded-lg transition-all duration-200 hover:text-ruet-accent hover:bg-ruet-green/15 border-none bg-transparent">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div id="panel-content"></div>
+    </div>
+  </div>
+
+  <!-- ===== NAVIGATION HUD ===== -->
+  <div id="nav-hud" class="fixed inset-0 z-[1200] bg-slate-950/20 pointer-events-none hidden transition-all duration-300">
+    <!-- Top Turn Banner -->
+    <div class="absolute top-5 left-1/2 -translate-x-1/2 w-[calc(100%-32px)] max-w-md bg-gradient-to-r from-emerald-900/95 to-emerald-950/95 backdrop-blur-md border border-emerald-500/30 rounded-2xl p-4 shadow-2xl pointer-events-auto flex items-center gap-4">
+      <div id="hud-turn-icon" class="w-12 h-12 bg-emerald-950/80 border border-emerald-400/40 rounded-xl flex items-center justify-center text-2xl text-emerald-400 shrink-0">
+        ⬆️
+      </div>
+      <div class="flex-1">
+        <div id="hud-turn-instruction" class="text-sm font-bold text-slate-100 leading-tight">Proceed forward along the pathway</div>
+        <div id="hud-turn-subtext" class="text-[11px] text-emerald-400 font-bold uppercase mt-1 tracking-wider">In 20 meters</div>
+      </div>
+    </div>
+
+    <!-- Bottom Panel -->
+    <div class="absolute bottom-5 left-1/2 -translate-x-1/2 w-[calc(100%-32px)] max-w-md bg-ruet-surface/95 backdrop-blur-xl border border-ruet-border/80 rounded-2xl p-4 shadow-2xl pointer-events-auto flex items-center justify-between gap-4">
+      <div>
+        <div class="text-[10px] text-slate-500 font-bold uppercase tracking-wider">ESTIMATED TIME</div>
+        <div class="flex items-baseline gap-1.5 mt-0.5">
+          <span id="hud-time" class="text-lg font-black text-slate-100">4 mins</span>
+          <span id="hud-distance" class="text-xs font-semibold text-slate-400">· 320 meters</span>
+        </div>
+      </div>
+      <div class="flex gap-2">
+        <button id="hud-voice-btn" class="w-10 h-10 rounded-xl bg-ruet-card border border-ruet-border/60 text-slate-300 flex items-center justify-center cursor-pointer transition-all hover:border-emerald-400 hover:text-emerald-400 border-none outline-none" title="Mute/Unmute Spoken Directions">
+          🔊
+        </button>
+        <button id="hud-exit-btn" class="px-4 py-2 rounded-xl bg-red-500/15 border border-red-500/40 text-red-400 text-xs font-bold tracking-wide uppercase hover:bg-red-500 hover:text-white transition-all cursor-pointer border-none outline-none">
+          End
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== LOCATE ME BUTTON ===== -->
+  <div class="fixed bottom-24 right-6 z-[1000]">
+    <button id="locate-btn" class="w-12 h-12 rounded-full bg-ruet-surface/95 backdrop-blur-md border border-ruet-border/60 text-slate-300 flex items-center justify-center cursor-pointer transition-all duration-300 shadow-2xl hover:border-blue-400 hover:text-blue-400 hover:scale-105" title="Show my location">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/></svg>
+    </button>
+  </div>
+
+  <!-- ===== Leaflet JS ===== -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- ===== Modular JS Imports ===== -->
+  <script src="js/map-data.js?v=1.3"></script>
+  <script src="js/pathfinder.js?v=1.3"></script>
+  <script src="js/app.js?v=1.3"></script>
+
+</body>
+</html>
