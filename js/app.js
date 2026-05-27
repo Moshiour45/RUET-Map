@@ -21,14 +21,14 @@
   // ============================================================
   //  MAP INITIALIZATION
   // ============================================================
-  const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  const osmLayer = L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
     maxZoom: 20,
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+    attribution: '&copy; Google Maps'
   });
 
-  const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+  const satelliteLayer = L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
     maxZoom: 20,
-    attribution: '&copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics'
+    attribution: '&copy; Google Maps'
   });
 
   const map = L.map('map', {
@@ -40,8 +40,8 @@
     zoomControl: false
   });
 
-  // Add zoom control top-right
-  L.control.zoom({ position: 'topright' }).addTo(map);
+  // Add zoom control bottom-right
+  L.control.zoom({ position: 'bottomright' }).addTo(map);
 
   // Satellite view toggle
   let isSatellite = false;
@@ -1043,8 +1043,8 @@
 
             return `
               <div class="direction-step flex items-start gap-3 p-2.5 rounded-lg border border-ruet-border/20 bg-slate-900/40 hover:bg-slate-900/80 hover:border-ruet-green/30 cursor-pointer transition-all duration-150"
-                   data-lat="${res.coordinates[idx] ? res.coordinates[idx][0] : ''}" 
-                   data-lng="${res.coordinates[idx] ? res.coordinates[idx][1] : ''}">
+                   data-lat="${step.lat || ''}" 
+                   data-lng="${step.lng || ''}">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" class="shrink-0 mt-0.5">${iconSvg}</svg>
                 <p class="text-[11.5px] leading-relaxed text-slate-300 font-sans">${step.text}</p>
               </div>

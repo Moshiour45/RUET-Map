@@ -169,6 +169,9 @@
       const node = graph[currentId];
       if (!node) continue;
 
+      // Do not allow transiting through buildings (buildings are start/end only)
+      if (node.isBuilding && currentId !== startId && currentId !== endId) continue;
+
       for (const edge of node.edges) {
         const neighborId = edge.to;
 
@@ -236,7 +239,7 @@
     const steps = [];
     const { nodeIds, coordinates } = pathResult;
 
-    if (nodeIds.length < 2) return ['You are already at your destination.'];
+    if (nodeIds.length < 2) return [{ type: 'arrive', text: 'You are already at your destination.', distance: 0, lat: coordinates[0] ? coordinates[0][0] : 0, lng: coordinates[0] ? coordinates[0][1] : 0 }];
 
     const startName = graph[nodeIds[0]].name || 'Starting Point';
     const endName = graph[nodeIds[nodeIds.length - 1]].name || 'Destination';
@@ -244,7 +247,9 @@
     steps.push({
       type: 'start',
       text: `Start your journey at **${startName}**.`,
-      distance: 0
+      distance: 0,
+      lat: coordinates[0][0],
+      lng: coordinates[0][1]
     });
 
     let currentSegmentDist = 0;
@@ -269,7 +274,9 @@
         steps.push({
           type: 'turn',
           text: `Head **${direction}** for about **${Math.round(currentSegmentDist)} meters** towards **${endName}**.`,
-          distance: currentSegmentDist
+          distance: currentSegmentDist,
+          lat: nextCoords[0],
+          lng: nextCoords[1]
         });
       } else if (isIntersection || direction !== lastDirection) {
         if (i > 0) {
@@ -277,7 +284,9 @@
           steps.push({
             type: 'turn',
             text: `Walk **${direction}** for **${Math.round(currentSegmentDist)} meters** to the ${nextNodeName.includes('intersection') ? 'intersection' : nextNodeName}.`,
-            distance: currentSegmentDist
+            distance: currentSegmentDist,
+            lat: nextCoords[0],
+            lng: nextCoords[1]
           });
           currentSegmentDist = 0;
         }
@@ -288,7 +297,9 @@
     steps.push({
       type: 'arrive',
       text: `Arrive at **${endName}** on your ${lastDirection ? 'right' : 'path'}.`,
-      distance: 0
+      distance: 0,
+      lat: coordinates[coordinates.length - 1][0],
+      lng: coordinates[coordinates.length - 1][1]
     });
 
     return steps;
