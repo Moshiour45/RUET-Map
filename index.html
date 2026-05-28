@@ -13,9 +13,9 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap"
     rel="stylesheet" />
-
   <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
 
   <!-- Tailwind (built via CLI) -->
   <link rel="stylesheet" href="./dist/style.css" />
@@ -77,15 +77,13 @@
         </svg>
         Legend
       </button>
-      <button id="satellite-btn"
+      <button id="theme-toggle-btn"
         class="flex items-center gap-2 px-4 h-10 rounded-xl bg-black/40 border border-white/10 text-slate-300 text-sm font-semibold cursor-pointer transition-all duration-300 hover:border-emerald-400 hover:text-emerald-400 hover:shadow-[0_0_15px_rgba(16,185,129,0.15)] hover:scale-105"
-        title="Toggle Satellite View">
+        title="Toggle Cyberpunk Glow View">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-          <circle cx="12" cy="12" r="10" />
-          <line x1="2" y1="12" x2="22" y2="12" />
-          <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
         </svg>
-        Satellite
+        Cyberpunk
       </button>
     </div>
   </header>
@@ -95,7 +93,7 @@
     class="fixed top-16 left-1/2 -translate-x-1/2 glass-panel border border-white/10 rounded-xl max-h-80 overflow-y-auto w-96 z-[1100] hidden shadow-2xl">
   </div>
 
-  <!-- ===== MAP ===== -->
+  <!-- ===== LEAFLET MAP WRAPPER ===== -->
   <div id="map" class="w-full h-screen"></div>
 
   <!-- ===== ROUTING PANEL (Left Slide-out) ===== -->
@@ -331,11 +329,16 @@
     </div>
   </div>
 
-  <!-- ===== LOCATE ME BUTTON ===== -->
-  <div class="fixed bottom-24 right-6 z-[1000]">
-    <button id="locate-btn"
-      class="w-12 h-12 rounded-full bg-ruet-surface/95 backdrop-blur-md border border-ruet-border/60 text-slate-300 flex items-center justify-center cursor-pointer transition-all duration-300 shadow-2xl hover:border-blue-400 hover:text-blue-400 hover:scale-105"
-      title="Show my location">
+  <!-- ===== VIEWPORT CONTROLS HUD ===== -->
+  <div id="viewport-controls">
+    <!-- Zoom In -->
+    <button id="zoom-in-btn" class="control-btn" title="Zoom In">➕</button>
+    <!-- Zoom Out -->
+    <button id="zoom-out-btn" class="control-btn" title="Zoom Out">➖</button>
+    <!-- Reset Zoom/Pan -->
+    <button id="zoom-reset-btn" class="control-btn" title="Reset View">🔄</button>
+    <!-- Locate Me -->
+    <button id="locate-btn" class="control-btn" title="Locate Me">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
         stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="10" />
@@ -352,9 +355,9 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <!-- ===== Modular JS Imports ===== -->
-  <script src="js/map-data.js?v=1.4"></script>
-  <script src="js/pathfinder.js?v=1.4"></script>
-  <script src="js/app.js?v=1.4"></script>
+  <script src="src/js/map-data.js?v=1.7"></script>
+  <script src="src/js/pathfinder.js?v=1.7"></script>
+  <script src="src/js/app.js?v=1.7"></script>
 
 </body>
 

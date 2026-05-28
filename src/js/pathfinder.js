@@ -1,6 +1,7 @@
 // ============================================================
-//  RUET CAMPUS MAP — Pathfinder Module (Dijkstra)
-//  Calculates shortest paths & generates turn-by-turn directions.
+//  RUET CAMPUS MAP — Pathfinder Module (A* Search)
+//  Calculates shortest paths using A* with haversine heuristic,
+//  edge-projection snapping, and dynamic virtual node injection.
 // ============================================================
 (function () {
   'use strict';
@@ -21,7 +22,83 @@
     return R * c; // distance in meters
   }
 
-  // ── MinHeap for efficient Dijkstra ──
+  // ── Edge-Projection: Project point P onto segment AB ──
+  // Returns { lat, lng, t } where t ∈ [0, 1] is the fractional position
+  // along segment AB, and (lat, lng) is the closest point ON the segment.
+  function projectPointOnSegment(pLat, pLng, aLat, aLng, bLat, bLng) {
+    // Vector AB
+    const abLat = bLat - aLat;
+    const abLng = bLng - aLng;
+
+    // Vector AP
+    const apLat = pLat - aLat;
+    const apLng = pLng - aLng;
+
+    // Dot products
+    const abDotAb = abLat * abLat + abLng * abLng;
+
+    // Degenerate edge (A == B)
+    if (abDotAb < 1e-18) {
+      return { lat: aLat, lng: aLng, t: 0 };
+    }
+
+    const apDotAb = apLat * abLat + apLng * abLng;
+
+    // Parametric position clamped to [0, 1]
+    let t = apDotAb / abDotAb;
+    t = Math.max(0, Math.min(1, t));
+
+    // Interpolate to get the projected point
+    const projLat = aLat + t * abLat;
+    const projLng = aLng + t * abLng;
+
+    return { lat: projLat, lng: projLng, t };
+  }
+
+  // ── Find nearest road edge projection for an arbitrary [lat, lng] ──
+  // Iterates all ROAD_EDGES, projects the point onto each segment line,
+  // and returns the closest match with full context for virtual node creation.
+  //
+  // Returns: {
+  //   projLat, projLng,       — snapped coordinate ON the edge
+  //   nodeA, nodeB,           — endpoint IDs of the matched edge
+  //   t,                      — fractional position along edge (0 = at A, 1 = at B)
+  //   distance,               — perpendicular distance from point to edge (meters)
+  //   edgeIndex,              — index into ROAD_EDGES array
+  //   attrs                   — edge attributes (drive/bike/walk flags)
+  // }
+  function findNearestEdgeProjection(lat, lng, roadNodes, roadEdges) {
+    let best = null;
+    let bestDist = Infinity;
+
+    for (let i = 0; i < roadEdges.length; i++) {
+      const [uId, vId, attrs] = roadEdges[i];
+      const nodeU = roadNodes[uId];
+      const nodeV = roadNodes[vId];
+      if (!nodeU || !nodeV) continue;
+
+      const proj = projectPointOnSegment(lat, lng, nodeU.lat, nodeU.lng, nodeV.lat, nodeV.lng);
+      const dist = haversine(lat, lng, proj.lat, proj.lng);
+
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = {
+          projLat: proj.lat,
+          projLng: proj.lng,
+          nodeA: uId,
+          nodeB: vId,
+          t: proj.t,
+          distance: dist,
+          edgeIndex: i,
+          attrs: attrs || {}
+        };
+      }
+    }
+
+    return best;
+  }
+
+  // ── MinHeap for efficient A* ──
   class MinHeap {
     constructor() {
       this.heap = [];
@@ -144,29 +221,132 @@
     return graph;
   }
 
-  // ── Dijkstra's Shortest Path Algorithm ──
-  function findShortestPath(graph, startId, endId, transitMode = 'walk') {
-    if (!graph[startId] || !graph[endId]) return null;
+  // ── Inject a virtual node into a shallow-cloned graph ──
+  // Splits the nearest road edge at the projected point, creating proportional sub-segments.
+  // Returns { augmentedGraph, virtualId, projLat, projLng }
+  function injectVirtualNode(graph, virtualId, lat, lng, roadNodes, roadEdges) {
+    const proj = findNearestEdgeProjection(lat, lng, roadNodes, roadEdges);
+    if (!proj) return null;
+
+    // Shallow-clone adjacency lists only for affected nodes (nodeA, nodeB)
+    const augGraph = Object.create(graph);
+
+    // Clone nodeA
+    const nodeA = graph[proj.nodeA];
+    if (nodeA) {
+      augGraph[proj.nodeA] = {
+        ...nodeA,
+        edges: [...nodeA.edges]
+      };
+    }
+
+    // Clone nodeB
+    const nodeB = graph[proj.nodeB];
+    if (nodeB) {
+      augGraph[proj.nodeB] = {
+        ...nodeB,
+        edges: [...nodeB.edges]
+      };
+    }
+
+    // Calculate the full edge weight between A and B
+    const fullWeight = haversine(nodeA.lat, nodeA.lng, nodeB.lat, nodeB.lng);
+
+    // Edge attributes from the matched edge
+    const edgeAttrs = roadEdges[proj.edgeIndex][2] || {};
+    const isDrivable = edgeAttrs.drive === true;
+    const isBikeable = edgeAttrs.bike !== false;
+    const isWalkable = edgeAttrs.walk !== false;
+
+    // Sub-segment weights proportional to t
+    const weightToA = fullWeight * proj.t;
+    const weightToB = fullWeight * (1 - proj.t);
+
+    // Create the virtual node
+    augGraph[virtualId] = {
+      id: virtualId,
+      lat: proj.projLat,
+      lng: proj.projLng,
+      name: `Virtual (${proj.projLat.toFixed(5)}, ${proj.projLng.toFixed(5)})`,
+      isBuilding: false,
+      isVirtual: true,
+      edges: [
+        { to: proj.nodeA, weight: weightToA, drive: isDrivable, bike: isBikeable, walk: isWalkable },
+        { to: proj.nodeB, weight: weightToB, drive: isDrivable, bike: isBikeable, walk: isWalkable }
+      ]
+    };
+
+    // Connect nodeA → virtual and nodeB → virtual
+    augGraph[proj.nodeA].edges.push({ to: virtualId, weight: weightToA, drive: isDrivable, bike: isBikeable, walk: isWalkable });
+    augGraph[proj.nodeB].edges.push({ to: virtualId, weight: weightToB, drive: isDrivable, bike: isBikeable, walk: isWalkable });
+
+    return {
+      augmentedGraph: augGraph,
+      virtualId,
+      projLat: proj.projLat,
+      projLng: proj.projLng
+    };
+  }
+
+  // ── A* Shortest Path Algorithm ──
+  // Accepts either string node IDs or [lat, lng] arrays for origin/destination.
+  // When [lat, lng] is provided, dynamically injects virtual nodes via edge-projection.
+  function findShortestPath(graph, startInput, endInput, transitMode = 'walk') {
+    const roadNodes = window.RuetData.ROAD_NODES;
+    const roadEdges = window.RuetData.ROAD_EDGES;
+
+    let workingGraph = graph;
+    let startId, endId;
+    let virtualNodes = []; // track injected virtuals for cleanup
+
+    // ── Resolve start input ──
+    if (Array.isArray(startInput)) {
+      // [lat, lng] coordinate — inject virtual start node
+      const result = injectVirtualNode(workingGraph, 'v_start', startInput[0], startInput[1], roadNodes, roadEdges);
+      if (!result) return null;
+      workingGraph = result.augmentedGraph;
+      startId = 'v_start';
+      virtualNodes.push('v_start');
+    } else {
+      startId = startInput;
+    }
+
+    // ── Resolve end input ──
+    if (Array.isArray(endInput)) {
+      // [lat, lng] coordinate — inject virtual end node
+      const result = injectVirtualNode(workingGraph, 'v_end', endInput[0], endInput[1], roadNodes, roadEdges);
+      if (!result) return null;
+      workingGraph = result.augmentedGraph;
+      endId = 'v_end';
+      virtualNodes.push('v_end');
+    } else {
+      endId = endInput;
+    }
+
+    if (!workingGraph[startId] || !workingGraph[endId]) return null;
+
+    // ── Destination coordinates for heuristic h(n) ──
+    const destLat = workingGraph[endId].lat;
+    const destLng = workingGraph[endId].lng;
 
     const distances = {};
     const previous = {};
     const pq = new MinHeap();
 
-    // Init
-    for (const nodeId of Object.keys(graph)) {
-      distances[nodeId] = Infinity;
-      previous[nodeId] = null;
-    }
+    // Init — only set start node, others default to Infinity via lookup
     distances[startId] = 0;
-    pq.push({ id: startId, priority: 0 });
+    const hStart = haversine(workingGraph[startId].lat, workingGraph[startId].lng, destLat, destLng);
+    pq.push({ id: startId, priority: hStart }); // f(start) = 0 + h(start)
 
     while (!pq.isEmpty()) {
-      const { id: currentId, priority: currentDist } = pq.pop();
+      const { id: currentId } = pq.pop();
 
       if (currentId === endId) break; // Found shortest path
-      if (currentDist > distances[currentId]) continue;
 
-      const node = graph[currentId];
+      const gCurrent = distances[currentId];
+      if (gCurrent === undefined) continue; // stale entry
+
+      const node = workingGraph[currentId];
       if (!node) continue;
 
       // Do not allow transiting through buildings (buildings are start/end only)
@@ -180,28 +360,35 @@
         if (transitMode === 'bike' && !edge.bike) continue;
         if (transitMode === 'walk' && !edge.walk) continue;
 
-        const newDist = currentDist + edge.weight;
+        const newDist = gCurrent + edge.weight;
+        const prevDist = distances[neighborId];
 
-        if (newDist < distances[neighborId]) {
+        if (prevDist === undefined || newDist < prevDist) {
           distances[neighborId] = newDist;
           previous[neighborId] = currentId;
-          pq.push({ id: neighborId, priority: newDist });
+
+          // A* priority: f(n) = g(n) + h(n)
+          const neighborNode = workingGraph[neighborId];
+          const h = neighborNode
+            ? haversine(neighborNode.lat, neighborNode.lng, destLat, destLng)
+            : 0;
+          pq.push({ id: neighborId, priority: newDist + h });
         }
       }
     }
 
     // Reconstruct path
-    if (distances[endId] === Infinity) return null;
+    if (distances[endId] === undefined || distances[endId] === Infinity) return null;
 
     const path = [];
     let current = endId;
-    while (current !== null) {
+    while (current !== null && current !== undefined) {
       path.unshift(current);
       current = previous[current];
     }
 
     // Gather coordinates
-    const coordinates = path.map(nodeId => [graph[nodeId].lat, graph[nodeId].lng]);
+    const coordinates = path.map(nodeId => [workingGraph[nodeId].lat, workingGraph[nodeId].lng]);
 
     // Dynamic travel velocity logic
     let speed = 1.33; // Walk speed (~1.33 m/s)
@@ -241,8 +428,11 @@
 
     if (nodeIds.length < 2) return [{ type: 'arrive', text: 'You are already at your destination.', distance: 0, lat: coordinates[0] ? coordinates[0][0] : 0, lng: coordinates[0] ? coordinates[0][1] : 0 }];
 
-    const startName = graph[nodeIds[0]].name || 'Starting Point';
-    const endName = graph[nodeIds[nodeIds.length - 1]].name || 'Destination';
+    // Resolve names — virtual nodes get a generic label
+    const startNode = graph[nodeIds[0]];
+    const endNode = graph[nodeIds[nodeIds.length - 1]];
+    const startName = startNode ? (startNode.name || 'Starting Point') : 'Starting Point';
+    const endName = endNode ? (endNode.name || 'Destination') : 'Destination';
 
     steps.push({
       type: 'start',
@@ -268,7 +458,8 @@
 
       // Check if direction changed or it's the final node or it's a major intersection
       const isLast = i === nodeIds.length - 2;
-      const isIntersection = !graph[nextId].isBuilding && graph[nextId].edges.length > 2;
+      const nextNode = graph[nextId];
+      const isIntersection = nextNode && !nextNode.isBuilding && nextNode.edges && nextNode.edges.length > 2;
 
       if (isLast) {
         steps.push({
@@ -280,7 +471,7 @@
         });
       } else if (isIntersection || direction !== lastDirection) {
         if (i > 0) {
-          const nextNodeName = graph[nextId].isBuilding ? graph[nextId].name : `road intersection ${nextId}`;
+          const nextNodeName = (nextNode && nextNode.isBuilding) ? nextNode.name : `road intersection ${nextId}`;
           steps.push({
             type: 'turn',
             text: `Walk **${direction}** for **${Math.round(currentSegmentDist)} meters** to the ${nextNodeName.includes('intersection') ? 'intersection' : nextNodeName}.`,
@@ -337,7 +528,7 @@
       }
     }
 
-    // Run Dijkstra again on penalized graph
+    // Run A* again on penalized graph
     const alternativeResult = findShortestPath(graph, startId, endId, transitMode);
 
     // Restore original weights
@@ -362,6 +553,8 @@
     findShortestPath,
     findAlternativePath,
     haversine,
-    generateDirections
+    generateDirections,
+    projectPointOnSegment,
+    findNearestEdgeProjection
   };
 })();

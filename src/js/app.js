@@ -1,7 +1,7 @@
 // ============================================================
 //  RUET CAMPUS MAP — Main Application Module
-//  Manages Leaflet Map, Building Markers, Search, Filters,
-//  and Dijkstra-based Animated Routing.
+//  Manages Leaflet Map, Google Maps tile layers, corrected
+//  Dijkstra navigation routing, modern side HUD, and voice directions.
 // ============================================================
 (function () {
   'use strict';
@@ -19,7 +19,7 @@
   const routingGraph = buildGraph(window.RuetData);
 
   // ============================================================
-  //  MAP INITIALIZATION
+  //  MAP INITIALIZATION (Google Maps Tiles in Leaflet)
   // ============================================================
   const osmLayer = L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
     maxZoom: 20,
@@ -31,52 +31,76 @@
     attribution: '&copy; Google Maps'
   });
 
+  // Strict geographical boundaries locking map viewport strictly to RUET Campus
+  const campusBounds = L.latLngBounds(
+    [24.3615, 88.6235], // Southwest corner
+    [24.3740, 88.6375]  // Northeast corner
+  );
+
   const map = L.map('map', {
     center: CAMPUS_CENTER,
     zoom: 17,
-    minZoom: 15,
+    minZoom: 16,
     maxZoom: 20,
+    maxBounds: campusBounds,
+    maxBoundsViscosity: 1.0,
     layers: [osmLayer],
-    zoomControl: false
+    zoomControl: false // Hide Leaflet standard zoom controls to use our unified controls stack
   });
 
-  // Add zoom control bottom-right
-  L.control.zoom({ position: 'bottomright' }).addTo(map);
-
-  // Satellite view toggle
+  // Satellite view toggle layer binder
   let isSatellite = false;
-  const satelliteBtn = document.getElementById('satellite-btn');
-  if (satelliteBtn) {
-    satelliteBtn.addEventListener('click', function () {
+  const themeToggleBtn = document.getElementById('theme-toggle-btn');
+  if (themeToggleBtn) {
+    themeToggleBtn.addEventListener('click', function () {
       if (isSatellite) {
         map.removeLayer(satelliteLayer);
         map.addLayer(osmLayer);
-        this.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> Satellite`;
+        this.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg> Cyberpunk`;
+        this.title = "Toggle Satellite View";
       } else {
         map.removeLayer(osmLayer);
         map.addLayer(satelliteLayer);
-        this.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg> Street`;
+        this.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> Street`;
+        this.title = "Toggle Street View";
       }
       isSatellite = !isSatellite;
     });
   }
 
-  // Draw campus boundary (dashed green polygon - Geographically Correct)
+  // Draw campus bounds (dashed green boundary line)
   L.polygon([
-    [24.36830, 88.62400],
-    [24.36830, 88.63750],
-    [24.36220, 88.63750],
-    [24.36220, 88.62400]
+    [24.3740, 88.6235],
+    [24.3740, 88.6375],
+    [24.3615, 88.6375],
+    [24.3615, 88.6235]
   ], {
-    color: '#22c55e',
-    weight: 2.5,
+    color: '#10b981',
+    weight: 2.2,
     dashArray: '10, 6',
-    fillColor: '#22c55e',
+    fillColor: '#10b981',
     fillOpacity: 0.015,
     interactive: false
   }).addTo(map);
 
-  // Highway Label (Located at the South, matching actual GPS orientation)
+  // Draw permanent background road network outlines (beautiful glowing centerlines)
+  const roadNetworkGroup = L.layerGroup().addTo(map);
+  window.RuetData.ROAD_EDGES.forEach(([u, v]) => {
+    const nodeU = window.RuetData.ROAD_NODES[u];
+    const nodeV = window.RuetData.ROAD_NODES[v];
+    if (nodeU && nodeV) {
+      L.polyline([[nodeU.lat, nodeU.lng], [nodeV.lat, nodeV.lng]], {
+        color: '#10b981',
+        weight: 3.5,
+        opacity: 0.16,
+        lineCap: 'round',
+        lineJoin: 'round',
+        interactive: false
+      }).addTo(roadNetworkGroup);
+    }
+  });
+
+  // Highway indicator label overlay
   L.marker([24.36200, 88.63000], {
     icon: L.divIcon({
       className: '',
@@ -87,28 +111,25 @@
   }).addTo(map);
 
   // ============================================================
-  //  BUILDING MARKERS RENDERING (Leaflet Markers, no colored boxes)
+  //  BUILDING MARKERS RENDERING (Elegant Custom DivIcons)
   // ============================================================
   const markerLayers = {};
   const allMarkerGroup = L.layerGroup().addTo(map);
 
-  // Helper to generate elegant custom marker HTML based on category color
   function createMarkerIcon(category, isActive = true) {
     const colors = CAT_COLORS[category];
     const fill = colors.fill;
-    const border = colors.border;
     const opacityClass = isActive ? 'scale-100 opacity-100' : 'scale-90 opacity-40';
 
     return L.divIcon({
       className: 'custom-map-marker',
       html: `
         <div class="relative flex items-center justify-center w-8 h-8 transition-all duration-300 transform ${opacityClass}">
-          <!-- Pulse rings behind active marker -->
+          <!-- pulse halo behind active structures -->
           ${isActive ? `<div class="absolute inset-0 rounded-full animate-ping opacity-25" style="background-color: ${fill}"></div>` : ''}
-          <!-- Outer circle border -->
+          <!-- circular boundary card -->
           <div class="w-6 h-6 rounded-full flex items-center justify-center shadow-lg border-2 transition-all duration-300" 
                style="background-color: rgba(17, 24, 37, 0.85); border-color: ${fill};">
-            <!-- Core solid dot -->
             <div class="w-2.5 h-2.5 rounded-full" style="background-color: ${fill};"></div>
           </div>
         </div>
@@ -118,24 +139,21 @@
     });
   }
 
-  // Draw building markers on the map
+  // Draw building markers dynamically on Leaflet map
   BUILDINGS.forEach(b => {
     const cat = CAT_COLORS[b.category];
 
-    // Create marker
     const marker = L.marker(b.latlng, {
       icon: createMarkerIcon(b.category),
       riseOnHover: true
     });
 
-    // Tooltip
     marker.bindTooltip(b.name, {
       direction: 'top',
       offset: [0, -10],
-      className: 'leaflet-tooltip-override'
+      className: 'leaflet-tooltip'
     });
 
-    // Popup
     const popupHTML = `
       <div style="padding:16px 18px;min-width:240px;">
         <div style="font-size:15px;font-weight:700;color:#f1f5f9;margin-bottom:4px;">${b.name}</div>
@@ -147,16 +165,11 @@
         <div style="margin-top:12px;padding:10px 12px;background:rgba(26,34,53,0.6);border-radius:8px;border:1px solid rgba(42,58,82,0.4);">
           <span style="font-size:11px;color:#64748b;">📍 RUET Campus, Kazla, Rajshahi-6204</span>
         </div>
-        <a href="https://www.google.com/maps/search/RUET+${encodeURIComponent(b.name)}+Rajshahi" target="_blank" rel="noopener"
-           style="display:flex;align-items:center;justify-content:center;gap:6px;margin-top:10px;padding:9px;border-radius:8px;background:linear-gradient(135deg,#1a5c2e,#2d8a4e);color:white;font-size:12px;font-weight:600;text-decoration:none;font-family:Inter,sans-serif;">
-          🌐 View on Google Maps
-        </a>
       </div>
     `;
     marker.bindPopup(popupHTML, { maxWidth: 320 });
 
-    // Interactive event listeners
-    marker.on('click', function () {
+    marker.on('click', () => {
       openSidePanel(b);
     });
 
@@ -164,9 +177,7 @@
     markerLayers[b.id] = { marker, data: b };
   });
 
-  // ============================================================
-  //  BUILDING LABELS (shown at higher zoom levels)
-  // ============================================================
+  // Dynamic Building text labels visible at higher zoom levels
   const labelGroup = L.layerGroup().addTo(map);
 
   function updateLabels() {
@@ -177,7 +188,6 @@
     const fontSize = zoom >= 19 ? 11 : zoom >= 18 ? 10 : 8;
 
     BUILDINGS.forEach(b => {
-      // Shorten name to look cleaner on labels
       let shortName = b.name
         .replace('Shahid Lt. ', '')
         .replace('Shahid Abdul ', '')
@@ -193,15 +203,7 @@
         shortName = shortName
           .replace('Mechanical Engineering', 'ME')
           .replace('Civil Engineering', 'CE')
-          .replace('Chemical Engineering', 'ChE')
-          .replace("Teachers'", "Tchr.")
-          .replace("Employees'", "Emp.")
-          .replace("Officers'", "Ofcr.")
-          .replace(' Quarter', ' Qtr')
-          .replace('Playground', 'Field')
-          .replace('& College', '')
-          .replace('& Roundabout', '')
-          .replace('Flower Garden', 'Garden');
+          .replace('Chemical Engineering', 'ChE');
       }
 
       const marker = L.marker(b.latlng, {
@@ -221,164 +223,7 @@
   updateLabels();
 
   // ============================================================
-  //  USER GEOLOCATION ("MY LOCATION")
-  // ============================================================
-  let userLocationMarker = null;
-  let userLocationCircle = null;
-  let watchId = null;
-  let currentGPSLatLng = null;
-  const locateBtn = document.getElementById('locate-btn');
-
-  // snarl-match GPS to nearest road node
-  function getNearestRoadNode(latlng) {
-    let nearestNodeId = null;
-    let minDistance = Infinity;
-
-    for (const [id, coords] of Object.entries(window.RuetData.ROAD_NODES)) {
-      const dist = window.RuetPathfinder.haversine(latlng[0], latlng[1], coords.lat, coords.lng);
-      if (dist < minDistance) {
-        minDistance = dist;
-        nearestNodeId = id;
-      }
-    }
-    return { nodeId: nearestNodeId, distance: minDistance };
-  }
-
-  function snapDroppedLatLng(latlng, isStart) {
-    let nearestBuilding = null;
-    let minBuildingDist = Infinity;
-
-    BUILDINGS.forEach(b => {
-      const dist = window.RuetPathfinder.haversine(latlng.lat, latlng.lng, b.latlng[0], b.latlng[1]);
-      if (dist < minBuildingDist) {
-        minBuildingDist = dist;
-        nearestBuilding = b;
-      }
-    });
-
-    if (nearestBuilding && minBuildingDist <= 25) {
-      if (isStart) {
-        selectedFromId = nearestBuilding.id;
-        if (routeFromInput) routeFromInput.value = nearestBuilding.name;
-      } else {
-        selectedToId = nearestBuilding.id;
-        if (routeToInput) routeToInput.value = nearestBuilding.name;
-      }
-    } else {
-      // Snag nearest road node
-      const snapped = getNearestRoadNode([latlng.lat, latlng.lng]);
-      if (snapped && snapped.nodeId) {
-        if (isStart) {
-          selectedFromId = snapped.nodeId;
-          if (routeFromInput) routeFromInput.value = `Dropped Pin (${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)})`;
-        } else {
-          selectedToId = snapped.nodeId;
-          if (routeToInput) routeToInput.value = `Dropped Pin (${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)})`;
-        }
-      }
-    }
-
-    calculateAndDrawRoute();
-  }
-
-  function updateUserMarker(latlng, accuracy) {
-    currentGPSLatLng = latlng;
-
-    const pulseIcon = L.divIcon({
-      className: 'user-location-marker-container',
-      html: `
-        <div class="relative w-8 h-8 flex items-center justify-center">
-          <div class="absolute inset-0 rounded-full bg-blue-500 gps-ping"></div>
-          <div class="w-4 h-4 rounded-full bg-blue-600 border-2 border-slate-100 shadow-[0_0_10px_rgba(37,99,235,0.7)] z-10"></div>
-        </div>
-      `,
-      iconSize: [32, 32],
-      iconAnchor: [16, 16]
-    });
-
-    if (!userLocationMarker) {
-      userLocationMarker = L.marker(latlng, { icon: pulseIcon, zIndexOffset: 1000 }).addTo(map);
-      userLocationCircle = L.circle(latlng, {
-        radius: accuracy,
-        color: '#3b82f6',
-        fillColor: '#3b82f6',
-        fillOpacity: 0.1,
-        weight: 1.5,
-        dashArray: '4, 4'
-      }).addTo(map);
-    } else {
-      userLocationMarker.setLatLng(latlng);
-      userLocationCircle.setLatLng(latlng);
-      userLocationCircle.setRadius(accuracy);
-    }
-  }
-
-  function startLocationTracking(panToUser = true) {
-    if (!navigator.geolocation) {
-      alert("Geolocation is not supported by this browser.");
-      return;
-    }
-
-    if (locateBtn) {
-      locateBtn.classList.add('locate-active');
-      locateBtn.innerHTML = `
-        <svg class="animate-spin" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10" stroke-dasharray="16" stroke-linecap="round"/></svg>
-      `;
-    }
-
-    watchId = navigator.geolocation.watchPosition(
-      (position) => {
-        const latlng = [position.coords.latitude, position.coords.longitude];
-        const accuracy = position.coords.accuracy;
-
-        updateUserMarker(latlng, accuracy);
-
-        if (locateBtn) {
-          locateBtn.classList.add('locate-active');
-          locateBtn.innerHTML = `
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/></svg>
-          `;
-        }
-
-        if (panToUser) {
-          map.setView(latlng, 18);
-          panToUser = false; // Only pan on first lock or explicit click
-        }
-      },
-      (error) => {
-        console.error("GPS Watch error:", error);
-        if (locateBtn) {
-          locateBtn.classList.remove('locate-active');
-          locateBtn.innerHTML = `
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/></svg>
-          `;
-        }
-        alert("GPS Error: Could not acquire your position. Please verify that location services are enabled.");
-      },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-    );
-  }
-
-  if (locateBtn) {
-    locateBtn.addEventListener('click', () => {
-      if (watchId !== null) {
-        // If already tracking, re-pan to the user's location
-        if (currentGPSLatLng) {
-          map.setView(currentGPSLatLng, 18);
-        } else {
-          // If tracking failed or loading, reset and restart
-          navigator.geolocation.clearWatch(watchId);
-          watchId = null;
-          startLocationTracking(true);
-        }
-      } else {
-        startLocationTracking(true);
-      }
-    });
-  }
-
-  // ============================================================
-  //  GLOBAL SEARCH
+  //  GLOBAL SEARCH & CENTERING FUNCTION
   // ============================================================
   const searchBox = document.getElementById('search-box');
   const searchResults = document.getElementById('search-results');
@@ -437,7 +282,18 @@
     });
   }
 
-  // Keyboard accessibility
+  function focusBuilding(id) {
+    const entry = markerLayers[id];
+    if (!entry) return;
+    const { marker, data } = entry;
+
+    map.setView(data.latlng, 19);
+    marker.openPopup();
+    openSidePanel(data);
+  }
+
+  window.focusBuilding = focusBuilding;
+
   document.addEventListener('keydown', (e) => {
     if (e.key === '/' && document.activeElement !== searchBox) {
       e.preventDefault();
@@ -450,24 +306,6 @@
       closeRouteAutocomplete();
     }
   });
-
-  // ============================================================
-  //  FOCUS / NAVIGATE TO BUILDING
-  // ============================================================
-  function focusBuilding(id) {
-    const entry = markerLayers[id];
-    if (!entry) return;
-    const { marker, data } = entry;
-
-    map.setView(data.latlng, 19);
-
-    // Dynamic scale trigger
-    marker.openPopup();
-    openSidePanel(data);
-  }
-
-  // Expose to window for inline onclick triggers
-  window.focusBuilding = focusBuilding;
 
   // ============================================================
   //  SIDE DETAILS PANEL
@@ -489,7 +327,7 @@
       </div>
       <p class="text-slate-400 text-sm leading-7 mb-5">${b.desc}</p>
       
-      <!-- Housed Departments list for Academic Buildings -->
+      <!-- Departments housed list -->
       ${b.departments ? `
         <div class="p-4 bg-ruet-card/85 rounded-xl border border-ruet-border/40 mb-4 shadow-sm">
           <div class="flex items-center gap-2 mb-3">
@@ -520,23 +358,15 @@
           <span class="text-xs text-slate-500">University</span>
         </div>
         <p class="text-[13px] text-slate-200">Rajshahi University of Engineering & Technology</p>
-        <p class="text-[11px] text-slate-500 mt-1">Est. 1964 · 152 Acres · 4 Faculties · 18 Departments</p>
       </div>
       <div class="flex gap-2.5">
         <button onclick="focusBuilding('${b.id}')" class="flex-1 py-3 rounded-xl bg-gradient-to-r from-ruet-green to-ruet-green-light border border-ruet-accent/30 text-white text-sm font-semibold cursor-pointer font-sans transition-all duration-300 flex items-center justify-center gap-2 hover:brightness-110">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          Focus Map
+          🎯 Focus Map
         </button>
         <button onclick="window.RuetApp.setRoutingDestination('${b.id}')" class="flex-1 py-3 rounded-xl bg-ruet-card border border-ruet-border/60 text-ruet-accent text-sm font-semibold cursor-pointer font-sans transition-all duration-300 flex items-center justify-center gap-2 hover:border-ruet-accent hover:bg-ruet-green/10">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="3 11 22 2 13 21 11 13 3 11"/></svg>
-          Directions
+          🚀 Directions
         </button>
       </div>
-      <a href="https://www.google.com/maps/search/RUET+${encodeURIComponent(b.name)}+Rajshahi" target="_blank" rel="noopener"
-         class="flex items-center justify-center gap-2 w-full py-3 mt-3 rounded-xl bg-ruet-card border border-ruet-border/60 text-slate-400 text-sm font-medium no-underline font-sans transition-all duration-300 hover:border-blue-400 hover:text-blue-400">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-        View on Google Maps
-      </a>
     `;
     sidePanel.style.right = '0px';
   }
@@ -565,23 +395,17 @@
 
       activeCategory = this.dataset.cat;
 
-      // Filter building markers
       Object.values(markerLayers).forEach(({ marker, data }) => {
         if (activeCategory === 'all' || data.category === activeCategory) {
           marker.setIcon(createMarkerIcon(data.category, true));
-          if (!map.hasLayer(marker)) {
-            marker.addTo(allMarkerGroup);
-          }
+          if (!map.hasLayer(marker)) marker.addTo(allMarkerGroup);
         } else {
-          // Instead of fully removing, we can fade them out or remove them
-          // In Leaflet, setting icon style opacity is standard, or we can remove from map
           marker.setIcon(createMarkerIcon(data.category, false));
         }
       });
     });
   });
 
-  // Activate "All" category bar on start
   const allCatPill = document.querySelector('.cat-pill[data-cat="all"]');
   if (allCatPill) {
     allCatPill.classList.add('border-ruet-accent', 'text-ruet-accent', 'bg-ruet-green/20');
@@ -610,12 +434,11 @@
           <span class="text-sm text-slate-200">Campus boundary (Dashed Green)</span>
         </div>
         <div class="p-4 bg-ruet-card/80 rounded-xl border border-ruet-border/40 mt-5">
-          <p class="text-xs text-slate-500 leading-relaxed">
+          <p class="text-xs text-slate-500 leading-relaxed font-sans">
             <strong class="text-slate-400">Controls:</strong><br/>
-            • Scroll or pinch to zoom map<br/>
+            • Scroll to Zoom<br/>
             • Click any location dot for detailed history<br/>
-            • Use Routing Panel to navigate between buildings<br/>
-            • Click any turn direction to zoom to that road segment
+            • Double-click anywhere to snap routing pins
           </p>
         </div>
       `;
@@ -634,6 +457,7 @@
   let speechMuted = false;
   let liveNavigationInterval = null;
   let speechAnnouncedSteps = new Set();
+  let currentGPSLatLng = null;
 
   let startMarker = null;
   let endMarker = null;
@@ -651,28 +475,23 @@
   const routePanel = document.getElementById('route-panel');
   const routeCloseBtn = document.getElementById('route-close-btn');
 
-  // Selected building IDs
   let selectedFromId = '';
   let selectedToId = '';
 
-  // Setup routing trigger button from info badge / sidebar
   function setRoutingDestination(destId) {
     const destBuilding = BUILDINGS.find(b => b.id === destId);
     if (!destBuilding) return;
 
-    // Open route panel
     if (routePanel) {
       routePanel.classList.remove('-left-[380px]');
       routePanel.classList.add('left-4');
     }
 
-    // Set "To" input
     selectedToId = destId;
     if (routeToInput) {
       routeToInput.value = destBuilding.name;
     }
 
-    // Default "From" to Main Gate if empty
     if (!selectedFromId && routeFromInput) {
       const startBuilding = BUILDINGS.find(b => b.id === 'main-gate');
       if (startBuilding) {
@@ -682,12 +501,9 @@
     }
 
     closeSidePanel();
-    
-    // Automatically trigger routing calculation
     calculateAndDrawRoute();
   }
 
-  // Autocomplete setup
   function setupAutocomplete(inputElement, dropdownElement, onSelect) {
     if (!inputElement || !dropdownElement) return;
 
@@ -701,8 +517,6 @@
 
     function renderDropdown(filterText) {
       const q = filterText.toLowerCase().trim();
-      
-      // Filter list of buildings
       const filtered = BUILDINGS.filter(b => 
         b.name.toLowerCase().includes(q) || 
         CAT_COLORS[b.category].label.toLowerCase().includes(q) ||
@@ -717,8 +531,8 @@
         currentLocationHtml = `
           <div class="autocomplete-item flex items-center gap-2.5 px-3 py-2.5 cursor-pointer transition-all duration-200 hover:bg-blue-500/10 border-b border-ruet-border/30"
                data-id="current-location" data-name="My Current Location">
-            <span class="text-xs shrink-0">📍</span>
-            <span class="text-xs font-bold text-blue-400 leading-tight">My Current Location</span>
+             <span class="text-xs shrink-0">📍</span>
+             <span class="text-xs font-bold text-blue-400 leading-tight">My Current Location</span>
           </div>
         `;
       }
@@ -756,7 +570,6 @@
     });
   }
 
-  // Close all autocomplete boxes when clicking elsewhere
   function closeRouteAutocomplete() {
     if (fromAutocomplete) fromAutocomplete.classList.add('hidden');
     if (toAutocomplete) toAutocomplete.classList.add('hidden');
@@ -771,7 +584,6 @@
     }
   });
 
-  // Setup actual autocomplete bindings
   setupAutocomplete(routeFromInput, fromAutocomplete, (id) => {
     selectedFromId = id;
   });
@@ -780,7 +592,6 @@
     selectedToId = id;
   });
 
-  // Swap From/To trigger
   if (routeSwapBtn) {
     routeSwapBtn.addEventListener('click', () => {
       const tempId = selectedFromId;
@@ -797,7 +608,81 @@
     });
   }
 
-  // Calculate and draw routing path
+  // Edge-projection snapping: finds the closest point ON a road segment
+  // (not just the nearest vertex node) for any arbitrary coordinate.
+  function getNearestRoadProjection(latlng) {
+    const proj = window.RuetPathfinder.findNearestEdgeProjection(
+      latlng[0], latlng[1],
+      window.RuetData.ROAD_NODES,
+      window.RuetData.ROAD_EDGES
+    );
+    if (!proj) return null;
+    return {
+      projLat: proj.projLat,
+      projLng: proj.projLng,
+      nodeA: proj.nodeA,
+      nodeB: proj.nodeB,
+      t: proj.t,
+      distance: proj.distance
+    };
+  }
+
+  function snapDroppedLatLng(latlng, isStart) {
+    let nearestBuilding = null;
+    let minBuildingDist = Infinity;
+
+    BUILDINGS.forEach(b => {
+      const dist = window.RuetPathfinder.haversine(latlng.lat, latlng.lng, b.latlng[0], b.latlng[1]);
+      if (dist < minBuildingDist) {
+        minBuildingDist = dist;
+        nearestBuilding = b;
+      }
+    });
+
+    if (nearestBuilding && minBuildingDist <= 25) {
+      // Close to a building — snap to building ID
+      if (isStart) {
+        selectedFromId = nearestBuilding.id;
+        if (routeFromInput) routeFromInput.value = nearestBuilding.name;
+      } else {
+        selectedToId = nearestBuilding.id;
+        if (routeToInput) routeToInput.value = nearestBuilding.name;
+      }
+    } else {
+      // Not near a building — project onto nearest road segment edge
+      const proj = getNearestRoadProjection([latlng.lat, latlng.lng]);
+      if (proj) {
+        // Store as [lat, lng] array so pathfinder creates a virtual node
+        const snappedCoord = [proj.projLat, proj.projLng];
+        if (isStart) {
+          selectedFromId = snappedCoord;
+          if (routeFromInput) routeFromInput.value = `Waypoint (${proj.projLat.toFixed(5)}, ${proj.projLng.toFixed(5)})`;
+        } else {
+          selectedToId = snappedCoord;
+          if (routeToInput) routeToInput.value = `Waypoint (${proj.projLat.toFixed(5)}, ${proj.projLng.toFixed(5)})`;
+        }
+      }
+    }
+
+    calculateAndDrawRoute();
+  }
+
+  // Double click map to set route snappably
+  map.on('dblclick', (e) => {
+    if (!selectedFromId) {
+      snapDroppedLatLng(e.latlng, true);
+    } else if (!selectedToId) {
+      snapDroppedLatLng(e.latlng, false);
+    } else {
+      selectedFromId = '';
+      selectedToId = '';
+      routeFromInput.value = '';
+      routeToInput.value = '';
+      clearRoute();
+      snapDroppedLatLng(e.latlng, true);
+    }
+  });
+
   function calculateAndDrawRoute() {
     if (!selectedFromId || !selectedToId) {
       alert('Please select both starting point and destination.');
@@ -809,7 +694,6 @@
       return;
     }
 
-    // Handle Geolocation dynamic "My Location" endpoints
     const isFromCurrent = selectedFromId === 'current-location';
     const isToCurrent = selectedToId === 'current-location';
 
@@ -826,85 +710,51 @@
       return;
     }
 
-    // Clear previous
     clearRoute();
 
-    // Temporarily inject current-location into the graph if active
-    let injectedNode = null;
-    let originalEdgesToRestore = [];
+    // Resolve start/end inputs — pathfinder accepts both string IDs and [lat, lng] arrays.
+    // For GPS current-location or custom pin drops (stored as arrays), pass coordinates directly;
+    // the pathfinder will dynamically inject virtual nodes via edge-projection.
+    let startInput = isFromCurrent ? currentGPSLatLng : selectedFromId;
+    let endInput = isToCurrent ? currentGPSLatLng : selectedToId;
 
-    if (isFromCurrent || isToCurrent) {
-      const snapped = getNearestRoadNode(currentGPSLatLng);
-      if (!snapped || !snapped.nodeId) {
-        alert("Unable to snap your current location to the campus road network.");
-        return;
-      }
-
-      const nearestNodeId = snapped.nodeId;
-      const dist = window.RuetPathfinder.haversine(
-        currentGPSLatLng[0], currentGPSLatLng[1],
-        routingGraph[nearestNodeId].lat, routingGraph[nearestNodeId].lng
-      );
-
-      // Create temporary node
-      routingGraph['current-location'] = {
-        id: 'current-location',
-        lat: currentGPSLatLng[0],
-        lng: currentGPSLatLng[1],
-        name: 'My Current Location',
-        isBuilding: true,
-        edges: [{ to: nearestNodeId, weight: dist }]
-      };
-
-      // Connect nearest node bidirectionally
-      routingGraph[nearestNodeId].edges.push({ to: 'current-location', weight: dist });
-
-      // Track so we can clean up afterwards
-      injectedNode = 'current-location';
-      originalEdgesToRestore.push({ nodeId: nearestNodeId, targetId: 'current-location' });
-    }
-
-    // Call pathfinder dijkstra
-    const result = findShortestPath(routingGraph, selectedFromId, selectedToId, currentTransitMode);
-
-    // Clean up temporary geolocation graph node immediately
-    if (injectedNode) {
-      delete routingGraph[injectedNode];
-      originalEdgesToRestore.forEach(({ nodeId, targetId }) => {
-        if (routingGraph[nodeId]) {
-          routingGraph[nodeId].edges = routingGraph[nodeId].edges.filter(edge => edge.to !== targetId);
-        }
-      });
-    }
+    const result = findShortestPath(routingGraph, startInput, endInput, currentTransitMode);
 
     if (!result) {
       alert('No walkable routing path found for ' + currentTransitMode + ' mode between these locations.');
       return;
     }
 
-    // Save primary result
     activePrimaryResult = result;
 
-    // Call pathfinder dynamic alternative path finding
+    // For alternative routes, pass the same inputs (pathfinder handles virtual nodes internally)
+    const altStartId = isFromCurrent ? 'v_start' : (Array.isArray(selectedFromId) ? 'v_start' : selectedFromId);
+    const altEndId = isToCurrent ? 'v_end' : (Array.isArray(selectedToId) ? 'v_end' : selectedToId);
     activeAlternateResult = window.RuetPathfinder.findAlternativePath(
-      routingGraph, selectedFromId, selectedToId, result.nodeIds, currentTransitMode
+      routingGraph, altStartId, altEndId, result.nodeIds, currentTransitMode
     );
 
-    // Render both lines
     drawPolylines(activePrimaryResult, activeAlternateResult);
 
-    // 2. Add custom START and END markers on map
-    const startBuilding = isFromCurrent ? {
-      name: 'My Current Location',
-      latlng: currentGPSLatLng
-    } : BUILDINGS.find(b => b.id === selectedFromId);
+    // Resolve display info for markers
+    const resolveLocation = (input, isCurrent) => {
+      if (isCurrent) return { name: 'My Current Location', latlng: currentGPSLatLng };
+      if (Array.isArray(input)) return { name: `Waypoint (${input[0].toFixed(5)}, ${input[1].toFixed(5)})`, latlng: input };
+      const building = BUILDINGS.find(b => b.id === input);
+      if (building) return { name: building.name, latlng: building.latlng };
+      const roadNode = window.RuetData.ROAD_NODES[input];
+      if (roadNode) return { name: input, latlng: [roadNode.lat, roadNode.lng] };
+      return { name: 'Unknown', latlng: result.coordinates[0] };
+    };
 
-    const endBuilding = isToCurrent ? {
-      name: 'My Current Location',
-      latlng: currentGPSLatLng
-    } : BUILDINGS.find(b => b.id === selectedToId);
+    const startInfo = resolveLocation(startInput, isFromCurrent);
+    const endInfo = resolveLocation(endInput, isToCurrent);
 
-    startMarker = L.marker(startBuilding.latlng, {
+    // Use actual route coordinates for marker positions (snapped to road)
+    const startLatLng = result.coordinates[0];
+    const endLatLng = result.coordinates[result.coordinates.length - 1];
+
+    startMarker = L.marker(startLatLng, {
       draggable: true,
       icon: L.divIcon({
         className: '',
@@ -915,13 +765,13 @@
         `,
         iconAnchor: [16, 16]
       })
-    }).bindPopup(`<b>Start:</b> ${startBuilding.name}`).addTo(map);
+    }).bindPopup(`<b>Start:</b> ${startInfo.name}`).addTo(map);
 
     startMarker.on('dragend', (e) => {
       snapDroppedLatLng(e.target.getLatLng(), true);
     });
 
-    endMarker = L.marker(endBuilding.latlng, {
+    endMarker = L.marker(endLatLng, {
       draggable: true,
       icon: L.divIcon({
         className: '',
@@ -932,29 +782,25 @@
         `,
         iconAnchor: [16, 16]
       })
-    }).bindPopup(`<b>Destination:</b> ${endBuilding.name}`).addTo(map);
+    }).bindPopup(`<b>Destination:</b> ${endInfo.name}`).addTo(map);
 
     endMarker.on('dragend', (e) => {
       snapDroppedLatLng(e.target.getLatLng(), false);
     });
 
-    // Adjust map viewport to cover the route perfectly
     map.fitBounds(activeRoutePath.getBounds(), {
       padding: [80, 80]
     });
 
-    // 3. Render routing results card and step directions
     updateRoutePanelUI(activePrimaryResult);
 
     if (routeClearBtn) routeClearBtn.classList.remove('hidden');
   }
 
-  // Draw Primary and Alternative Polylines
   function drawPolylines(primary, alternate) {
     if (activeRoutePath) map.removeLayer(activeRoutePath);
     if (activeAlternatePath) map.removeLayer(activeAlternatePath);
 
-    // 1. Render alternate (grey, dotted)
     if (alternate) {
       activeAlternatePath = L.polyline(alternate.coordinates, {
         color: '#475569',
@@ -967,7 +813,6 @@
       activeAlternatePath.bindTooltip('Alternative Route', { sticky: true });
 
       activeAlternatePath.on('click', () => {
-        // Swap primary/alternate references
         const temp = activePrimaryResult;
         activePrimaryResult = activeAlternateResult;
         activeAlternateResult = temp;
@@ -977,7 +822,6 @@
       });
     }
 
-    // 2. Render primary (blue baseline, emerald green dashed flow)
     const baseLine = L.polyline(primary.coordinates, {
       color: '#1e3a8a',
       weight: 8,
@@ -998,68 +842,53 @@
     activeRoutePath = L.featureGroup([baseLine, activeLine]).addTo(map);
   }
 
-  // Update Route Results UI Panel
   function updateRoutePanelUI(res) {
     const directionsList = generateDirections(routingGraph, res);
     const mins = Math.ceil(res.walkTime / 60);
 
     let transitLabel = 'Walking';
-    let transitIcon = '🚶';
-    if (currentTransitMode === 'bike') {
-      transitLabel = 'Cycling';
-      transitIcon = '🚴';
-    }
-    if (currentTransitMode === 'drive') {
-      transitLabel = 'Driving';
-      transitIcon = '🚗';
-    }
+    if (currentTransitMode === 'bike') transitLabel = 'Cycling';
+    if (currentTransitMode === 'drive') transitLabel = 'Driving';
 
     if (routeResultsPanel) {
       routeResultsPanel.innerHTML = `
-        <!-- Distance / Time Overview -->
         <div class="grid grid-cols-2 gap-3 mb-4">
-          <div class="p-3 bg-ruet-card/90 rounded-xl border border-ruet-border/30">
-            <span class="text-[10px] text-slate-500 uppercase font-semibold">Distance</span>
+          <div class="p-3 bg-ruet-card/90 rounded-xl border border-ruet-border/30 shadow-sm">
+            <span class="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Distance</span>
             <div class="text-base font-extrabold text-ruet-accent mt-0.5">${Math.round(res.distance)} m</div>
           </div>
-          <div class="p-3 bg-ruet-card/90 rounded-xl border border-ruet-border/30">
-            <span class="text-[10px] text-slate-500 uppercase font-semibold">${transitLabel} Time</span>
+          <div class="p-3 bg-ruet-card/90 rounded-xl border border-ruet-border/30 shadow-sm">
+            <span class="text-[10px] text-slate-500 uppercase font-bold tracking-wider">${transitLabel} Time</span>
             <div class="text-base font-extrabold text-blue-400 mt-0.5">${mins} ${mins === 1 ? 'min' : 'mins'}</div>
           </div>
         </div>
 
-        <!-- Step Navigation -->
         <h4 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Step-by-Step Directions</h4>
         <div class="space-y-2.5 max-h-[160px] overflow-y-auto pr-1">
           ${directionsList.map((step, idx) => {
-            let iconSvg = '';
-            if (step.type === 'start') {
-              iconSvg = `<circle cx="12" cy="12" r="10" fill="#10b981" stroke="#0f172a" stroke-width="2"/>`;
-            } else if (step.type === 'arrive') {
-              iconSvg = `<circle cx="12" cy="12" r="10" fill="#ef4444" stroke="#0f172a" stroke-width="2"/>`;
-            } else {
-              iconSvg = `<polygon points="12,2 22,22 12,17 2,22" fill="#3b82f6" class="origin-center rotate-45 transform scale-75"/>`;
-            }
+            let icon = '⬆️';
+            if (step.type === 'start') icon = '🟢';
+            else if (step.type === 'arrive') icon = '🚩';
+            else if (step.text.toLowerCase().includes('left')) icon = '⬅️';
+            else if (step.text.toLowerCase().includes('right')) icon = '➡️';
 
             return `
               <div class="direction-step flex items-start gap-3 p-2.5 rounded-lg border border-ruet-border/20 bg-slate-900/40 hover:bg-slate-900/80 hover:border-ruet-green/30 cursor-pointer transition-all duration-150"
                    data-lat="${step.lat || ''}" 
                    data-lng="${step.lng || ''}">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" class="shrink-0 mt-0.5">${iconSvg}</svg>
+                <span class="text-xs shrink-0 mt-0.5 select-none">${icon}</span>
                 <p class="text-[11.5px] leading-relaxed text-slate-300 font-sans">${step.text}</p>
               </div>
             `;
           }).join('')}
         </div>
 
-        <!-- Start Navigation Button -->
         <button id="start-nav-btn" class="w-full py-3 mt-4 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 border border-blue-400/30 text-white text-[11px] font-bold uppercase tracking-wider cursor-pointer transition-all duration-300 hover:brightness-110 flex items-center justify-center gap-2 shadow-lg border-none outline-none">
           🚀 Start Spoken Navigation
         </button>
       `;
       routeResultsPanel.classList.remove('hidden');
 
-      // Bind start navigation button
       const startNavBtn = document.getElementById('start-nav-btn');
       if (startNavBtn) {
         startNavBtn.addEventListener('click', () => {
@@ -1067,7 +896,6 @@
         });
       }
 
-      // Bind zoom actions to individual steps
       document.querySelectorAll('.direction-step').forEach(step => {
         step.addEventListener('click', function () {
           const lat = parseFloat(this.dataset.lat);
@@ -1093,38 +921,29 @@
     }
   }
 
-  // Active HUD Navigation Engine
   function startHUDNavigation(activeRes) {
-    const routePanel = document.getElementById('route-panel');
+    if (routePanel) routePanel.classList.add('hidden');
     const header = document.getElementById('header');
     const categoryBar = document.getElementById('category-bar');
-    const locateBtnContainer = document.getElementById('locate-btn')?.parentElement;
-
-    if (routePanel) routePanel.classList.add('hidden');
     if (header) header.classList.add('hidden');
     if (categoryBar) categoryBar.classList.add('hidden');
-    if (locateBtnContainer) locateBtnContainer.classList.add('hidden');
 
     const navHud = document.getElementById('nav-hud');
     if (navHud) navHud.classList.remove('hidden');
 
-    // Reset voice announcement memory
     speechAnnouncedSteps.clear();
 
     const endBuildingName = selectedToId === 'current-location' ? 'your current location' : (BUILDINGS.find(b => b.id === selectedToId)?.name || 'destination');
     announceVoice("Starting navigation to " + endBuildingName);
 
-    // Start auto-tracking location
     startLocationTracking(false);
 
-    // Loop proximity snap checker
     if (liveNavigationInterval) clearInterval(liveNavigationInterval);
     liveNavigationInterval = setInterval(() => {
       const userPos = currentGPSLatLng || activeRes.coordinates[0];
       updateLiveNavigation(userPos, activeRes);
     }, 1500);
 
-    // Initial update immediately
     const userPos = currentGPSLatLng || activeRes.coordinates[0];
     updateLiveNavigation(userPos, activeRes);
   }
@@ -1135,7 +954,6 @@
     const coordinates = activeResult.coordinates;
     const steps = generateDirections(routingGraph, activeResult);
 
-    // Find snapped index in path
     let nearestIndex = 0;
     let minDistance = Infinity;
 
@@ -1147,7 +965,6 @@
       }
     }
 
-    // Snapped progress to nearest index
     const remainingCoords = coordinates.slice(nearestIndex);
     let remainingDist = 0;
     for (let i = 0; i < remainingCoords.length - 1; i++) {
@@ -1169,32 +986,29 @@
     if (hudTime) hudTime.textContent = `${mins} ${mins === 1 ? 'min' : 'mins'}`;
     if (hudDistance) hudDistance.textContent = `· ${Math.round(remainingDist)} meters`;
 
-    // Map progress to steps
     const stepIndex = Math.min(Math.floor(nearestIndex / Math.max(1, Math.ceil(coordinates.length / steps.length))), steps.length - 1);
     const activeStep = steps[stepIndex] || steps[0];
 
     if (activeStep) {
       const turnInstructionText = activeStep.text.replace(/\*\*/g, '');
-      const hudTurnInstruction = document.getElementById('hud-turn-instruction');
-      if (hudTurnInstruction) hudTurnInstruction.textContent = turnInstructionText;
+      const hudInst = document.getElementById('hud-turn-instruction');
+      if (hudInst) hudInst.textContent = turnInstructionText;
 
       const nextNodeIndex = Math.min(nearestIndex + 2, coordinates.length - 1);
       const nextNodeCoords = coordinates[nextNodeIndex];
       const distToNextNode = window.RuetPathfinder.haversine(userLatLng[0], userLatLng[1], nextNodeCoords[0], nextNodeCoords[1]);
       
-      const hudTurnSubtext = document.getElementById('hud-turn-subtext');
-      if (hudTurnSubtext) {
-        hudTurnSubtext.textContent = `In ${Math.round(distToNextNode)} meters`;
+      const hudSub = document.getElementById('hud-turn-subtext');
+      if (hudSub) {
+        hudSub.textContent = `In ${Math.round(distToNextNode)} meters`;
       }
 
-      // Spoken directions triggers
       const announcementKey = activeStep.text;
       if (!speechAnnouncedSteps.has(announcementKey)) {
         speechAnnouncedSteps.add(announcementKey);
         announceVoice(turnInstructionText);
       }
 
-      // Update turn arrow icons in HUD
       const turnIcon = document.getElementById('hud-turn-icon');
       if (turnIcon) {
         if (activeStep.type === 'start') turnIcon.textContent = '🟢';
@@ -1215,7 +1029,7 @@
       utterance.pitch = 1.0;
       window.speechSynthesis.speak(utterance);
     } catch (e) {
-      console.error("Speech Synthesis error:", e);
+      console.error("Speech error:", e);
     }
   }
 
@@ -1228,22 +1042,16 @@
       window.speechSynthesis.cancel();
     }
 
-    // Show elements again
-    const routePanel = document.getElementById('route-panel');
+    if (routePanel) routePanel.classList.remove('hidden');
     const header = document.getElementById('header');
     const categoryBar = document.getElementById('category-bar');
-    const locateBtnContainer = document.getElementById('locate-btn')?.parentElement;
-
-    if (routePanel) routePanel.classList.remove('hidden');
     if (header) header.classList.remove('hidden');
     if (categoryBar) categoryBar.classList.remove('hidden');
-    if (locateBtnContainer) locateBtnContainer.classList.remove('hidden');
 
     const navHud = document.getElementById('nav-hud');
     if (navHud) navHud.classList.add('hidden');
   }
 
-  // Clear routing layer
   function clearRoute() {
     if (activeRoutePath) {
       map.removeLayer(activeRoutePath);
@@ -1275,7 +1083,6 @@
     endHUDNavigation();
   }
 
-  // Setup general button routing handlers
   if (routeSubmitBtn) {
     routeSubmitBtn.addEventListener('click', calculateAndDrawRoute);
   }
@@ -1290,7 +1097,6 @@
     });
   }
 
-  // Transit Mode Selection Event Handlers
   document.querySelectorAll('.transit-mode-btn').forEach(btn => {
     btn.addEventListener('click', function() {
       document.querySelectorAll('.transit-mode-btn').forEach(b => {
@@ -1307,18 +1113,14 @@
     });
   });
 
-  // HUD UI event listeners
   const hudVoiceBtn = document.getElementById('hud-voice-btn');
   if (hudVoiceBtn) {
     hudVoiceBtn.addEventListener('click', () => {
       speechMuted = !speechMuted;
       hudVoiceBtn.textContent = speechMuted ? '🔇' : '🔊';
       hudVoiceBtn.title = speechMuted ? 'Unmute voice navigation' : 'Mute voice navigation';
-      if (!speechMuted) {
-        announceVoice("Voice guidance enabled.");
-      } else {
-        if (window.speechSynthesis) window.speechSynthesis.cancel();
-      }
+      if (!speechMuted) announceVoice("Voice guidance enabled.");
+      else if (window.speechSynthesis) window.speechSynthesis.cancel();
     });
   }
 
@@ -1327,7 +1129,6 @@
     hudExitBtn.addEventListener('click', endHUDNavigation);
   }
 
-  // Routing sidebar sliding transitions
   if (routeToggleBtn && routePanel) {
     routeToggleBtn.addEventListener('click', () => {
       if (routePanel.classList.contains('-left-[380px]')) {
@@ -1345,6 +1146,90 @@
     routeCloseBtn.addEventListener('click', () => {
       routePanel.classList.remove('left-4');
       routePanel.classList.add('-left-[380px]');
+    });
+  }
+
+  // ============================================================
+  //  USER GEOLOCATION ("MY LOCATION")
+  // ============================================================
+  let watchId = null;
+
+  function startLocationTracking(panToUser = true) {
+    if (!navigator.geolocation) {
+      alert("Geolocation is not supported by this browser.");
+      return;
+    }
+
+    const locateBtn = document.getElementById('locate-btn');
+    if (locateBtn) {
+      locateBtn.classList.add('locate-active');
+      locateBtn.innerHTML = `
+        <svg class="animate-spin" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10" stroke-dasharray="16" stroke-linecap="round"/></svg>
+      `;
+    }
+
+    watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        const latlng = [position.coords.latitude, position.coords.longitude];
+        const accuracy = position.coords.accuracy;
+
+        updateUserMarker(latlng, accuracy);
+
+        if (locateBtn) {
+          locateBtn.classList.add('locate-active');
+          locateBtn.innerHTML = `
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/></svg>
+          `;
+        }
+
+        if (panToUser) {
+          map.setView(latlng, 18);
+          panToUser = false;
+        }
+      },
+      (error) => {
+        console.error("GPS Watch error:", error);
+        if (locateBtn) {
+          locateBtn.classList.remove('locate-active');
+          locateBtn.innerHTML = `
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/></svg>
+          `;
+        }
+        alert("GPS Error: Could not acquire your position. Enable location services.");
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  }
+
+  // ============================================================
+  //  VIEWPORT CONTROLS HUD CLICKS
+  // ============================================================
+  document.getElementById('zoom-in-btn').addEventListener('click', () => {
+    map.zoomIn();
+  });
+
+  document.getElementById('zoom-out-btn').addEventListener('click', () => {
+    map.zoomOut();
+  });
+
+  document.getElementById('zoom-reset-btn').addEventListener('click', () => {
+    map.setView(CAMPUS_CENTER, 17);
+  });
+
+  const locateBtn = document.getElementById('locate-btn');
+  if (locateBtn) {
+    locateBtn.addEventListener('click', () => {
+      if (watchId !== null) {
+        if (currentGPSLatLng) {
+          map.setView(currentGPSLatLng, 18);
+        } else {
+          navigator.geolocation.clearWatch(watchId);
+          watchId = null;
+          startLocationTracking(true);
+        }
+      } else {
+        startLocationTracking(true);
+      }
     });
   }
 
